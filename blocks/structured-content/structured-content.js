@@ -76,6 +76,38 @@ function renderValue(value) {
 }
 
 /**
+ * Generic renderer used when no schema-specific renderer exists.
+ * @param {Element} block
+ * @param {object} data structured content payload (json.data)
+ */
+export function renderGeneric(block, data) {
+  block.replaceChildren(renderValue(data));
+}
+
+/**
+ * Module path of the renderer for a schema name, or null if the name is unsafe.
+ * Renderers live in ./renderers/<schema>.js and export a default
+ * `(block, data, metadata) => void | Promise<void>`.
+ * @param {string} schema
+ * @returns {string|null}
+ */
+export function rendererPath(schema) {
+  if (!schema || !/^[a-z0-9][a-z0-9-_]*$/i.test(schema)) return null;
+  return `${window.hlx.codeBasePath}/blocks/structured-content/renderers/${schema.toLowerCase()}.js`;
+}
+
+async function loadRenderer(schema) {
+  const path = rendererPath(schema);
+  if (!path) return renderGeneric;
+  try {
+    const mod = await import(path);
+    return mod.default || renderGeneric;
+  } catch {
+    return renderGeneric;
+  }
+}
+
+/**
  * loads and decorates the block
  * @param {Element} block The block element
  */
@@ -90,8 +122,10 @@ export default async function decorate(block) {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const json = await resp.json();
     const { metadata = {}, data = json } = json;
-    if (metadata.schemaName) block.dataset.schema = metadata.schemaName;
-    block.replaceChildren(renderValue(data));
+    const schema = metadata.schemaName;
+    if (schema) block.dataset.schema = schema;
+    const render = await loadRenderer(schema);
+    await render(block, data, metadata);
   } catch (error) {
     // eslint-disable-next-line no-console
     console.warn('structured-content: failed to load', url, error);
